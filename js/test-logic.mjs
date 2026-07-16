@@ -18,6 +18,7 @@ function loadSat(extraFiles = []) {
     'js/utils.js',
     'js/category-utils.js',
     'js/assessment-manager.js',
+    'js/answer-entry-manager.js',
     ...extraFiles,
   ];
   for (const file of files) {
@@ -133,4 +134,44 @@ const uKey = 'Grammar::';
 assert(unclassified.categoryStats.middle[uKey], 'empty middle bucket exists');
 assert(SAT.getMiddleDisplayName('') === '미분류', 'display label for empty middle');
 
-console.log('All 14 test groups passed.');
+// 15. 빠른 입력 — 숫자키 → A~E 매핑
+assert(SAT.keyToAnswerOption('1', 'alpha') === 'A', 'key 1 -> A');
+assert(SAT.keyToAnswerOption('5', 'alpha') === 'E', 'key 5 -> E');
+assert(SAT.keyToAnswerOption('3', 'numeric') === '3', 'key 3 numeric');
+
+// 16. 일괄 입력 파싱 — 붙여쓰기
+assert(
+  JSON.stringify(SAT.parseBulkAnswerInput('1234512345', 'numeric')) === JSON.stringify(['1', '2', '3', '4', '5', '1', '2', '3', '4', '5']),
+  'concatenated numeric parse'
+);
+assert(
+  JSON.stringify(SAT.parseBulkAnswerInput('1, 2, 3, 4, 5', 'numeric')) === JSON.stringify(['1', '2', '3', '4', '5']),
+  'comma separated parse'
+);
+assert(
+  JSON.stringify(SAT.parseBulkAnswerInput('1 / 2 / 3', 'numeric')) === JSON.stringify(['1', '2', '3']),
+  'slash separated parse'
+);
+assert(
+  JSON.stringify(SAT.parseBulkAnswerInput('ABCDE', 'alpha')) === JSON.stringify(['A', 'B', 'C', 'D', 'E']),
+  'concatenated alpha parse'
+);
+
+// 17. 일괄 입력 검증
+const vShort = SAT.validateBulkAnswers(['1', '2', '3'], 5, 'numeric');
+assert(vShort.valid && vShort.warnings.length === 1, 'short answer warning');
+assert(vShort.warnings[0].detail.includes('4, 5'), 'missing question numbers listed');
+assert(vShort.warnings[0].questionNumbers.includes(4), 'missing question number 4');
+
+const vLong = SAT.validateBulkAnswers(['1', '2', '3', '4', '5', '1'], 5, 'numeric');
+assert(vLong.valid && vLong.warnings.length === 1, 'long answer warning');
+assert(vLong.applyCount === 5, 'apply count capped');
+
+const vBad = SAT.validateBulkAnswers(['1', 'X', '3'], 3, 'numeric');
+assert(!vBad.valid && vBad.errors[0].questionNumber === 2, 'invalid token error position');
+assert(vBad.errorQuestionNumbers.includes(2), 'error question numbers');
+
+const mapped = SAT.tokensToAnswersMap(['1', '2'], [{ id: 'q1', number: 1 }, { id: 'q2', number: 2 }], 'numeric');
+assert(mapped.q1 === '1' && mapped.q2 === '2', 'tokens to answers map');
+
+console.log('All 17 test groups passed.');

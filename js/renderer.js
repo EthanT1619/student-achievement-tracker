@@ -8,6 +8,7 @@
     collectMajorSuggestions, collectMiddleSuggestions,
     getMiddleDisplayName, getMiddleStatText, formatQuestionRateDisplay,
     collectExamTypeSuggestions,
+    renderPageGuidePanel, renderDashboardChecklist, renderFieldHint, renderEmptyState,
   } = SAT;
 
   class Renderer {
@@ -49,6 +50,8 @@
     const backupWarning = daysSince(lastBackup) >= 7;
 
     main.innerHTML = `
+      ${renderPageGuidePanel('dashboard')}
+      ${renderDashboardChecklist(data)}
       <div class="prototype-banner" role="status">
         이 프로그램은 현재 개인 테스트용 프로토타입입니다. 데이터는 사용 중인 브라우저에만 저장됩니다.
       </div>
@@ -88,7 +91,10 @@
                     return `<li><strong>${escapeHtml(e.title)}</strong> · ${escapeHtml(cls?.name || '—')} · ${formatDate(e.date)}</li>`;
                   })
                   .join('')}</ul>`
-              : '<div class="empty-state"><p>등록된 시험이 없습니다.</p><button class="btn btn-primary" data-nav="exams">시험 만들기</button></div>'
+              : renderEmptyState('등록된 시험이 없습니다. 시험 설정에서 문항과 정답을 먼저 입력해주세요.', {
+                  actionLabel: '시험 만들기',
+                  actionNav: 'exams',
+                })
           }
         </div>
       </section>
@@ -113,6 +119,7 @@
     const classStudents = data.students.filter((s) => s.classId === selectedClassId);
 
     main.innerHTML = `
+      ${renderPageGuidePanel('classes')}
       <section class="card">
         <div class="card-header"><h2>반 관리</h2></div>
         <div class="card-body">
@@ -145,7 +152,7 @@
                           </tr>`;
                         })
                         .join('')
-                    : '<tr><td colspan="4"><div class="empty-state"><p>등록된 반이 없습니다.</p></div></td></tr>'
+                    : `<tr><td colspan="4">${renderEmptyState('등록된 반이 없습니다. 먼저 반을 만들어주세요.')}</td></tr>`
                 }
               </tbody>
             </table>
@@ -191,12 +198,12 @@
                             </tr>`;
                           })
                           .join('')
-                      : '<tr><td colspan="4"><div class="empty-state"><p>이 반에 등록된 학생이 없습니다.</p></div></td></tr>'
+                      : `<tr><td colspan="4">${renderEmptyState('이 반에 학생이 없습니다. 학생을 등록한 뒤 시험 결과를 입력할 수 있습니다.')}</td></tr>`
                   }
                 </tbody>
               </table>
             </div>`
-              : '<div class="empty-state"><p>먼저 반을 등록하고 선택해주세요.</p></div>'
+              : renderEmptyState('먼저 반을 등록하고 선택해주세요.', { actionLabel: '반 등록하기', actionNav: 'classes' })
           }
         </div>
       </section>`;
@@ -209,6 +216,7 @@
     const examTypeSuggestions = collectExamTypeSuggestions(data.exams);
 
     main.innerHTML = `
+      ${renderPageGuidePanel('exams')}
       <section class="card no-print">
         <div class="card-header"><h2>${editingExam ? '시험 수정' : '시험 생성'}</h2></div>
         <div class="card-body">
@@ -229,6 +237,9 @@
               </label>
               <label class="form-label">문항 수<input type="number" name="questionCount" min="1" max="100" required value="${editingExam?.questionCount || 10}"></label>
             </div>
+            ${renderFieldHint('exam-questions')}
+            ${renderFieldHint('category-major')}
+            ${renderFieldHint('category-middle')}
             <div id="questions-container" class="questions-container">
               ${this.renderQuestionRows(questions, editingExam?.questionCount || 10, data.questions)}
             </div>
@@ -268,7 +279,7 @@
                           </tr>`;
                         })
                         .join('')
-                    : '<tr><td colspan="5"><div class="empty-state"><p>등록된 시험이 없습니다.</p></div></td></tr>'
+                    : `<tr><td colspan="5">${renderEmptyState('등록된 시험이 없습니다. 시험 설정에서 문항과 정답을 먼저 입력해주세요.')}</td></tr>`
                 }
               </tbody>
             </table>
@@ -320,9 +331,13 @@
     const answers = { ...(this.app.state.currentAnswers || existing?.answers || {}) };
     const currentQ = this.app.state.currentQuestion || 1;
     const answerMode = questions.length ? detectAnswerMode(questions) : 'numeric';
-    const options = answerMode === 'alpha' ? ['A', 'B', 'C', 'D', 'E'] : ['1', '2', '3', '4', '5'];
+    const options = answerMode === 'alpha' ? ['A', 'B', 'C', 'D', 'E'] : answerMode === 'numeric' ? ['1', '2', '3', '4', '5'] : [];
+    const entryMode = this.app.state.answerEntryMode || 'fast';
+    const hasNextStudent = this.app.hasNextAnswerStudent();
+    const studentName = escapeHtml(students.find((s) => s.id === studentId)?.name || '');
 
     main.innerHTML = `
+      ${renderPageGuidePanel('answer-entry')}
       <section class="card no-print">
         <div class="card-header"><h2>답안 입력</h2></div>
         <div class="card-body">
@@ -352,51 +367,102 @@
       ${
         exam && studentId && questions.length
           ? `
-        <section class="card">
+        <section class="card" id="answer-entry-card">
           <div class="card-header">
-            <h2>${escapeHtml(exam.title)} — ${escapeHtml(students.find((s) => s.id === studentId)?.name || '')}</h2>
+            <h2>${escapeHtml(exam.title)} — ${studentName}</h2>
             ${existing ? '<span class="badge badge--info">기존 결과 불러옴</span>' : ''}
           </div>
           <div class="card-body">
-            <div class="question-nav">
-              ${questions
-                .map((q) => {
-                  const ans = answers[q.id] ?? answers[String(q.number)] ?? '';
-                  const missing = !String(ans).trim();
-                  const active = q.number === currentQ ? ' question-pill--active' : '';
-                  const missClass = missing ? ' question-pill--missing' : '';
-                  return `<button type="button" class="question-pill${active}${missClass}" data-goto="${q.number}">${q.number}</button>`;
-                })
-                .join('')}
+            <div class="answer-mode-tabs no-print">
+              <button type="button" class="answer-mode-tab${entryMode === 'fast' ? ' answer-mode-tab--active' : ''}" data-action="answer-mode-fast">빠른 입력</button>
+              <button type="button" class="answer-mode-tab${entryMode === 'bulk' ? ' answer-mode-tab--active' : ''}" data-action="answer-mode-bulk">일괄 입력</button>
             </div>
+            ${renderFieldHint('answer-entry')}
 
-            <div class="answer-panel" data-current="${currentQ}">
-              <h3>문항 ${currentQ}</h3>
-              <div class="answer-options">
-                ${options
-                  .map((opt) => {
-                    const q = questions.find((x) => x.number === currentQ);
-                    const currentAns = q ? (answers[q.id] ?? answers[String(q.number)] ?? '') : '';
-                    const selected = normalizeOpt(currentAns) === normalizeOpt(opt) ? ' answer-btn--selected' : '';
-                    return `<button type="button" class="answer-btn${selected}" data-answer="${opt}">${opt}</button>`;
-                  })
-                  .join('')}
+            <div id="answer-grid" class="answer-grid" aria-label="문항별 답안 — 클릭하면 해당 문항으로 이동">
+              ${this.renderAnswerGridHtml(questions, answers, currentQ, this.app.state.answerIssueQuestions || [])}
+            </div>
+            <p class="hint-text hint-text--grid">문항 번호를 클릭하면 해당 문항 입력으로 이동합니다. 오류·미입력 문항은 빨간색으로 표시됩니다.</p>
+
+            <div id="answer-fast-panel" class="${entryMode === 'bulk' ? 'hidden' : ''}">
+              <div id="answer-capture-panel" class="answer-panel answer-panel--focus" tabindex="0" role="group" aria-label="답안 빠른 입력">
+                <div class="answer-current-label">문항 <span id="answer-current-num">${currentQ}</span> <span class="answer-current-total">/ ${questions.length}</span></div>
+                <div id="answer-options" class="answer-options${answerMode === 'text' ? ' hidden' : ''}">
+                  ${this.renderAnswerOptionsHtml(questions, answers, currentQ, options)}
+                </div>
+                <div id="answer-direct-wrap" class="${answerMode === 'text' ? '' : 'answer-direct-wrap--collapsed'}">
+                  <label class="form-label">직접 입력
+                    <input type="text" id="answer-text-input" class="answer-text-input" value="${escapeHtml(getCurrentAnswer(answers, questions, currentQ))}" autocomplete="off">
+                  </label>
+                </div>
               </div>
-              <label class="form-label">직접 입력
-                <input type="text" class="answer-text-input" value="${escapeHtml(getCurrentAnswer(answers, questions, currentQ))}" placeholder="답안 직접 입력">
-              </label>
-              <p class="hint-text">숫자키 1~5로 선택 · 선택 후 다음 문항으로 이동 · Tab/방향키로 문항 이동</p>
+              <p class="hint-text">${answerMode === 'text'
+                ? '답을 입력한 뒤 Enter로 다음 문항으로 이동할 수 있습니다.'
+                : '답안 입력 영역을 한 번 선택한 뒤 숫자키 1~5를 연속으로 입력할 수 있습니다. · 방향키로 문항 이동'}</p>
             </div>
 
-            <div class="btn-group no-print">
-              <button class="btn btn-secondary" data-action="prev-question" ${currentQ <= 1 ? 'disabled' : ''}>이전</button>
-              <button class="btn btn-secondary" data-action="next-question" ${currentQ >= questions.length ? 'disabled' : ''}>다음</button>
-              <button class="btn btn-primary" data-action="save-answers">저장 및 채점</button>
+            <div id="answer-bulk-panel" class="${entryMode === 'fast' ? 'hidden' : ''}">
+              <label class="form-label">답안 일괄 입력
+                <textarea id="bulk-answer-input" class="bulk-answer-input" rows="4" placeholder="예: 1234512345 또는 1, 2, 3, 4, 5">${escapeHtml(this.app.state.bulkInputDraft || '')}</textarea>
+              </label>
+              <p class="hint-text">공백, 쉼표, 줄바꿈, /, - 로 구분하거나 붙여서 입력할 수 있습니다.</p>
+              <div id="bulk-validation-msg" class="bulk-validation-msg" aria-live="polite"></div>
+              <button type="button" class="btn btn-primary" data-action="apply-bulk">일괄 적용</button>
+            </div>
+
+            <div class="btn-group no-print answer-actions">
+              <button type="button" class="btn btn-secondary" data-action="prev-question" id="btn-prev-question" ${currentQ <= 1 ? 'disabled' : ''}>이전</button>
+              <button type="button" class="btn btn-secondary" data-action="next-question" id="btn-next-question" ${currentQ >= questions.length ? 'disabled' : ''}>다음</button>
+              <button type="button" class="btn btn-primary" data-action="save-answers">저장 및 채점</button>
+              <button type="button" class="btn btn-secondary" data-action="save-and-next-student" id="btn-save-next-student" ${hasNextStudent ? '' : 'disabled'} title="${hasNextStudent ? '' : '마지막 학생입니다.'}">저장 후 다음 학생</button>
             </div>
           </div>
         </section>`
-          : '<div class="empty-state card"><p>반, 시험, 학생을 선택해주세요.</p></div>'
+          : `<div class="card">${renderEmptyState(
+              !classId
+                ? '반을 먼저 선택해주세요. 등록된 반이 없다면 반·학생 메뉴에서 반을 만드세요.'
+                : !examId
+                  ? '시험을 선택해주세요. 등록된 시험이 없다면 시험 설정에서 문항과 정답을 먼저 입력해주세요.'
+                  : '학생을 선택해주세요. 이 반에 학생이 없다면 반·학생 메뉴에서 학생을 등록하세요.',
+              {
+                actionLabel: !classId ? '반·학생으로 이동' : !examId ? '시험 설정으로 이동' : '반·학생으로 이동',
+                actionNav: !classId ? 'classes' : !examId ? 'exams' : 'classes',
+              }
+            )}</div>`
       }`;
+
+    if (exam && studentId && questions.length) {
+      requestAnimationFrame(() => this.app.initAnswerEntryPanel());
+    }
+  }
+
+  renderAnswerGridHtml(questions, answers, currentQ, issueQuestions = []) {
+    const issueSet = new Set(issueQuestions || []);
+    return questions
+      .map((q) => {
+        const ans = answers[q.id] ?? answers[String(q.number)] ?? '';
+        const missing = !String(ans).trim();
+        const active = q.number === currentQ ? ' answer-grid-item--active' : '';
+        const missClass = missing ? ' answer-grid-item--missing' : '';
+        const issueClass = issueSet.has(q.number) ? ' answer-grid-item--issue' : '';
+        const display = missing ? '—' : escapeHtml(String(ans));
+        return `<button type="button" class="answer-grid-item${active}${missClass}${issueClass}" data-goto="${q.number}" aria-label="문항 ${q.number}${missing ? ' 미입력' : ` 답 ${ans}`}${issueSet.has(q.number) ? ' 확인 필요' : ''}">
+          <span class="answer-grid-item__num">${q.number}</span>
+          <span class="answer-grid-item__val">${display}</span>
+        </button>`;
+      })
+      .join('');
+  }
+
+  renderAnswerOptionsHtml(questions, answers, currentQ, options) {
+    const q = questions.find((x) => x.number === currentQ);
+    const currentAns = q ? (answers[q.id] ?? answers[String(q.number)] ?? '') : '';
+    return options
+      .map((opt) => {
+        const selected = normalizeOpt(currentAns) === normalizeOpt(opt) ? ' answer-btn--selected' : '';
+        return `<button type="button" class="answer-btn${selected}" data-answer="${opt}">${opt}</button>`;
+      })
+      .join('');
   }
 
   renderStudentResults(main, data) {
@@ -427,6 +493,7 @@
     const displayMetrics = graded || selectedResult;
 
     main.innerHTML = `
+      ${renderPageGuidePanel('student-results')}
       <section class="card no-print">
         <div class="card-header"><h2>학생 결과</h2></div>
         <div class="card-body">
@@ -521,8 +588,14 @@
             : ''
         }`
           : student
-            ? '<div class="empty-state card"><p>이 학생의 시험 결과가 없습니다.</p><button class="btn btn-primary no-print" data-nav="answer-entry">답안 입력</button></div>'
-            : '<div class="empty-state card"><p>반과 학생을 선택해주세요.</p></div>'
+            ? `<div class="card">${renderEmptyState('저장된 결과가 없습니다. 답안 입력 후 저장 및 채점을 진행해주세요.', {
+                actionLabel: '답안 입력',
+                actionNav: 'answer-entry',
+              })}</div>`
+            : `<div class="card">${renderEmptyState('반과 학생을 선택해주세요. 학생이 없다면 반·학생 메뉴에서 먼저 등록하세요.', {
+                actionLabel: '반·학생으로 이동',
+                actionNav: 'classes',
+              })}</div>`
       }`;
 
     if (student && selectedResult && graded) {
@@ -543,6 +616,7 @@
     const overview = exam ? computeExamOverview(results, students, questions, { ignoreCase: data.settings?.ignoreCase !== false }) : null;
 
     main.innerHTML = `
+      ${renderPageGuidePanel('exam-overview')}
       <section class="card no-print">
         <div class="card-header"><h2>시험 전체 결과</h2></div>
         <div class="card-body">
@@ -636,12 +710,22 @@
             </ul>
           </div>
         </section>`
-          : '<div class="empty-state card"><p>시험을 선택하거나 먼저 시험을 등록해주세요.</p></div>'
+          : `<div class="card">${renderEmptyState(
+              data.exams.length
+                ? '선택한 시험에 저장된 결과가 없습니다. 답안 입력 후 저장 및 채점을 진행해주세요.'
+                : '등록된 시험이 없습니다. 시험 설정에서 문항과 정답을 먼저 입력해주세요.',
+              {
+                actionLabel: data.exams.length ? '답안 입력' : '시험 설정',
+                actionNav: data.exams.length ? 'answer-entry' : 'exams',
+              }
+            )}</div>`
       }`;
   }
 
   renderBackup(main, data) {
     main.innerHTML = `
+      ${renderPageGuidePanel('backup')}
+      ${renderFieldHint('json-backup')}
       <section class="card">
         <div class="card-header"><h2>데이터 백업 및 복원</h2></div>
         <div class="card-body">

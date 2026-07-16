@@ -2,8 +2,13 @@
   const {
     APP_NAME,
     createRepository, Renderer, ImportExportManager,
-    buildResultRecord, confirmDialog, showToast, generateId,
+    buildResultRecord, confirmDialog, choiceDialog, showToast, generateId,
     normalizeCategory, collectMiddleSuggestions,
+    detectAnswerMode, keyToAnswerOption,
+    parseBulkAnswerInput, validateBulkAnswers, tokensToAnswersMap,
+    renderBulkValidationHtml,
+    setPageGuideOpen, isPageGuideOpen, setChecklistOpen,
+    renderHelpModalShell,
   } = SAT;
 
   class StudentAchievementApp {
@@ -16,6 +21,9 @@
       selectedClassId: null,
       editingExamId: null,
       answerEntry: { classId: '', examId: '', studentId: '' },
+      answerEntryMode: 'fast',
+      bulkInputDraft: '',
+      answerIssueQuestions: [],
       currentAnswers: null,
       currentQuestion: 1,
       studentResults: { classId: '', studentId: '' },
@@ -61,6 +69,13 @@
       return;
     }
 
+    const gotoTarget = e.target.closest('[data-goto]');
+    if (gotoTarget?.closest('#answer-entry-card')) {
+      e.preventDefault();
+      this.goToQuestion(Number(gotoTarget.dataset.goto));
+      return;
+    }
+
     const action = e.target.closest('[data-action]');
     if (!action) return;
 
@@ -86,22 +101,37 @@
       'prev-question': () => this.moveQuestion(-1),
       'next-question': () => this.moveQuestion(1),
       'save-answers': () => this.saveAnswers(),
+      'save-and-next-student': () => this.saveAnswers({ andNextStudent: true }),
+      'answer-mode-fast': () => this.setAnswerEntryMode('fast'),
+      'answer-mode-bulk': () => this.setAnswerEntryMode('bulk'),
+      'apply-bulk': () => this.applyBulkAnswers(),
       'select-result': () => {
         this.state.selectedResultId = action.dataset.id;
         this.renderer.render('student-results');
       },
       'print-results': () => window.print(),
       'copy-prev-categories': () => this.copyPrevCategories(Number(action.dataset.num)),
+      'toggle-page-guide': () => this.togglePageGuide(action.dataset.guideView),
+      'toggle-checklist': () => this.toggleChecklist(),
+      'open-help': () => this.openHelp(action.dataset.helpSection),
+      'close-help': () => this.closeHelp(),
     };
 
+    if (act === 'help-scroll') {
+      e.preventDefault();
+      const el = document.getElementById(`help-${action.dataset.helpId}`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      el?.focus({ preventScroll: true });
+      return;
+    }
+
     if (act === 'goto') {
-      this.state.currentQuestion = Number(action.dataset.goto);
-      this.renderer.render('answer-entry');
+      this.goToQuestion(Number(action.dataset.goto));
       return;
     }
 
     if (action.classList.contains('answer-btn')) {
-      this.setAnswer(action.dataset.answer);
+      this.setAnswer(action.dataset.answer, true);
       return;
     }
 
@@ -126,6 +156,8 @@
         this.state.answerEntry.examId = '';
         this.state.answerEntry.studentId = '';
         this.state.currentAnswers = null;
+        this.state.bulkInputDraft = '';
+        this.state.answerIssueQuestions = [];
         this.renderer.render('answer-entry');
       },
       examId: () => {
@@ -133,12 +165,16 @@
         this.state.answerEntry.studentId = '';
         this.state.currentAnswers = null;
         this.state.currentQuestion = 1;
+        this.state.bulkInputDraft = '';
+        this.state.answerIssueQuestions = [];
         this.renderer.render('answer-entry');
       },
       studentId: () => {
         this.state.answerEntry.studentId = e.target.value;
         this.state.currentAnswers = null;
         this.state.currentQuestion = 1;
+        this.state.bulkInputDraft = '';
+        this.state.answerIssueQuestions = [];
         this.renderer.render('answer-entry');
       },
       'sr-classId': () => {
@@ -194,34 +230,305 @@
   }
 
   handleKeydown(e) {
-    if (this.state.currentView !== 'answer-entry') return;
-    const { examId, studentId } = this.state.answerEntry;
-    if (!examId || !studentId) return;
+    if (e.key === 'Escape') {
+      const helpModal = document.getElementById('help-modal');
+      if (helpModal && !helpModal.classList.contains('hidden')) {
+        this.closeHelp();
+      }
+    }
+  }
 
-    const questions = this.repository.getQuestionsByExam(examId);
+  togglePageGuide(view) {
+    if (!view) return;
+    const open = !isPageGuideOpen(view);
+    setPageGuideOpen(view, open);
+    const panel = document.querySelector(`[data-page-guide="${view}"]`);
+    if (!panel) return;
+    const body = panel.querySelector('.page-guide__body');
+    const btn = panel.querySelector('[data-action="toggle-page-guide"]');
+    const icon = panel.querySelector('.page-guide__toggle-icon');
+    if (body) body.classList.toggle('page-guide__body--collapsed', !open);
+    if (btn) btn.setAttribute('aria-expanded', String(open));
+    if (icon) icon.textContent = open ? '▼' : '▶';
+  }
+
+  toggleChecklist() {
+    const data = this.repository.loadAll();
+    const open = !isChecklistOpen(data);
+    setChecklistOpen(open);
+    const panel = document.querySelector('.onboard-checklist');
+    if (!panel) return;
+    const body = panel.querySelector('.onboard-checklist__body');
+    const btn = panel.querySelector('[data-action="toggle-checklist"]');
+    const icon = panel.querySelector('.page-guide__toggle-icon');
+    if (body) body.classList.toggle('page-guide__body--collapsed', !open);
+    if (btn) btn.setAttribute('aria-expanded', String(open));
+    if (icon) icon.textContent = open ? '▼' : '▶';
+  }
+
+  openHelp(scrollToSection) {
+    const overlay = document.getElementById('modal-overlay');
+    const modal = document.getElementById('help-modal');
+    const content = document.getElementById('help-modal-content');
+    if (!overlay || !modal || !content) return;
+
+    content.innerHTML = renderHelpModalShell();
+    overlay.classList.remove('hidden');
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+
+    if (this._helpOverlayHandler) {
+      overlay.removeEventListener('click', this._helpOverlayHandler);
+    }
+    this._helpOverlayHandler = (ev) => {
+      if (ev.target === overlay) this.closeHelp();
+    };
+    overlay.addEventListener('click', this._helpOverlayHandler);
+
+    if (scrollToSection) {
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`help-${scrollToSection}`);
+        el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  }
+
+  closeHelp() {
+    const overlay = document.getElementById('modal-overlay');
+    const modal = document.getElementById('help-modal');
+    if (overlay) overlay.classList.add('hidden');
+    if (modal) {
+      modal.classList.add('hidden');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    if (this._helpOverlayHandler && overlay) {
+      overlay.removeEventListener('click', this._helpOverlayHandler);
+      this._helpOverlayHandler = null;
+    }
+  }
+
+  getAnswerEntryQuestions() {
+    const { examId } = this.state.answerEntry;
+    return examId ? this.repository.getQuestionsByExam(examId) : [];
+  }
+
+  getAnswerMode() {
+    const questions = this.getAnswerEntryQuestions();
+    return questions.length ? detectAnswerMode(questions) : 'numeric';
+  }
+
+  getAnswerEntryStudents() {
+    const { classId } = this.state.answerEntry;
+    return this.repository.getStudents({ classId, activeOnly: true });
+  }
+
+  hasNextAnswerStudent() {
+    return !!this.getNextStudentId();
+  }
+
+  getNextStudentId() {
+    const { studentId } = this.state.answerEntry;
+    const students = this.getAnswerEntryStudents();
+    const idx = students.findIndex((s) => s.id === studentId);
+    if (idx < 0 || idx >= students.length - 1) return null;
+    return students[idx + 1].id;
+  }
+
+  isAnswerShortcutBlocked(target) {
+    if (!target) return true;
+    if (target.matches('select')) return true;
+    if (target.matches('#answer-text-input, #bulk-answer-input, select, textarea, input')) return true;
+    const modal = document.getElementById('confirm-modal');
+    if (modal && !modal.classList.contains('hidden')) return true;
+    return false;
+  }
+
+  initAnswerEntryPanel() {
+    const panel = document.getElementById('answer-capture-panel');
+    if (!panel) return;
+
+    if (this._answerPanelKeyHandler) {
+      panel.removeEventListener('keydown', this._answerPanelKeyHandler);
+    }
+    this._answerPanelKeyHandler = (e) => this.handleAnswerPanelKeydown(e);
+    panel.addEventListener('keydown', this._answerPanelKeyHandler);
+
+    const textInput = document.getElementById('answer-text-input');
+    if (textInput) {
+      if (this._answerTextKeyHandler) {
+        textInput.removeEventListener('keydown', this._answerTextKeyHandler);
+      }
+      this._answerTextKeyHandler = (e) => this.handleAnswerTextKeydown(e);
+      textInput.addEventListener('keydown', this._answerTextKeyHandler);
+    }
+
+    if (this.state.answerEntryMode === 'fast') {
+      requestAnimationFrame(() => this.focusAnswerPanel());
+    }
+  }
+
+  focusAnswerPanel() {
+    const panel = document.getElementById('answer-capture-panel');
+    if (panel && this.state.answerEntryMode === 'fast') {
+      panel.focus({ preventScroll: true });
+    }
+  }
+
+  handleAnswerPanelKeydown(e) {
+    if (this.state.currentView !== 'answer-entry' || this.state.answerEntryMode !== 'fast') return;
+    if (this.isAnswerShortcutBlocked(e.target)) return;
+
+    const questions = this.getAnswerEntryQuestions();
     if (!questions.length) return;
+    const mode = this.getAnswerMode();
 
-    if (e.key >= '1' && e.key <= '5' && !e.target.matches('input, textarea, select')) {
-      const mode = questions.some((q) => /^[A-E]$/i.test(q.correctAnswer)) ? 'alpha' : 'numeric';
-      const opt = mode === 'alpha' ? String.fromCharCode(64 + Number(e.key)) : e.key;
-      if (Number(e.key) <= 5) {
+    if (e.key >= '1' && e.key <= '5' && mode !== 'text') {
+      const opt = keyToAnswerOption(e.key, mode);
+      if (opt) {
         e.preventDefault();
         this.setAnswer(opt, true);
       }
+      return;
     }
 
-    if (e.key === 'ArrowRight' || (e.key === 'Tab' && !e.shiftKey)) {
-      if (!e.target.matches('select')) {
-        e.preventDefault();
-        this.moveQuestion(1);
-      }
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      this.moveQuestion(1);
+      return;
     }
-    if (e.key === 'ArrowLeft' || (e.key === 'Tab' && e.shiftKey)) {
-      if (!e.target.matches('select')) {
-        e.preventDefault();
-        this.moveQuestion(-1);
-      }
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      this.moveQuestion(-1);
     }
+  }
+
+  handleAnswerTextKeydown(e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const value = e.target.value.trim();
+    if (!value) return;
+    const mode = this.getAnswerMode();
+    if (mode === 'numeric' && !/^[1-5]$/.test(value) && !/^\d+$/.test(value)) {
+      showToast('1~5 사이의 값을 입력해주세요.', 'error');
+      this.focusQuestionIssues([this.state.currentQuestion]);
+      return;
+    }
+    if (mode === 'alpha' && !/^[A-Ea-e]$/.test(value)) {
+      showToast('A~E 사이의 값을 입력해주세요.', 'error');
+      this.focusQuestionIssues([this.state.currentQuestion]);
+      return;
+    }
+    const normalized = mode === 'alpha' ? value.toUpperCase() : (/^\d+$/.test(value) ? String(parseInt(value, 10)) : value);
+    this.setAnswer(normalized, true);
+  }
+
+  setAnswerEntryMode(mode) {
+    this.state.answerEntryMode = mode;
+    const bulk = document.getElementById('bulk-answer-input');
+    if (bulk) this.state.bulkInputDraft = bulk.value;
+    const fastPanel = document.getElementById('answer-fast-panel');
+    const bulkPanel = document.getElementById('answer-bulk-panel');
+    document.querySelectorAll('.answer-mode-tab').forEach((tab) => {
+      tab.classList.toggle('answer-mode-tab--active', tab.dataset.action === `answer-mode-${mode}`);
+    });
+    if (fastPanel) fastPanel.classList.toggle('hidden', mode !== 'fast');
+    if (bulkPanel) bulkPanel.classList.toggle('hidden', mode !== 'bulk');
+    if (mode === 'fast') this.focusAnswerPanel();
+  }
+
+  patchAnswerEntryUI() {
+    const card = document.getElementById('answer-entry-card');
+    if (!card) {
+      this.renderer.render('answer-entry');
+      return;
+    }
+
+    const questions = this.getAnswerEntryQuestions();
+    const answers = this.getCurrentAnswers();
+    const currentQ = this.state.currentQuestion;
+    const mode = this.getAnswerMode();
+    const options = mode === 'alpha' ? ['A', 'B', 'C', 'D', 'E'] : mode === 'numeric' ? ['1', '2', '3', '4', '5'] : [];
+
+    const numEl = document.getElementById('answer-current-num');
+    if (numEl) numEl.textContent = String(currentQ);
+
+    const grid = document.getElementById('answer-grid');
+    if (grid) {
+      grid.innerHTML = this.renderer.renderAnswerGridHtml(
+        questions,
+        answers,
+        currentQ,
+        this.state.answerIssueQuestions || []
+      );
+    }
+
+    const opts = document.getElementById('answer-options');
+    if (opts) {
+      opts.classList.toggle('hidden', mode === 'text');
+      opts.innerHTML = this.renderer.renderAnswerOptionsHtml(questions, answers, currentQ, options);
+    }
+
+    const directWrap = document.getElementById('answer-direct-wrap');
+    if (directWrap) {
+      directWrap.classList.toggle('answer-direct-wrap--collapsed', mode !== 'text');
+    }
+
+    const textInput = document.getElementById('answer-text-input');
+    if (textInput) {
+      const q = questions.find((x) => x.number === currentQ);
+      const val = q ? (answers[q.id] ?? answers[String(q.number)] ?? '') : '';
+      textInput.value = val;
+    }
+
+    const prevBtn = document.getElementById('btn-prev-question');
+    const nextBtn = document.getElementById('btn-next-question');
+    if (prevBtn) prevBtn.disabled = currentQ <= 1;
+    if (nextBtn) nextBtn.disabled = currentQ >= questions.length;
+
+    const nextStudentBtn = document.getElementById('btn-save-next-student');
+    if (nextStudentBtn) {
+      nextStudentBtn.disabled = !this.hasNextAnswerStudent();
+      nextStudentBtn.title = this.hasNextAnswerStudent() ? '' : '마지막 학생입니다.';
+    }
+
+    const panel = document.getElementById('answer-capture-panel');
+    if (panel) panel.classList.add('answer-panel--pulse');
+    requestAnimationFrame(() => {
+      panel?.classList.remove('answer-panel--pulse');
+    });
+  }
+
+  goToQuestion(num) {
+    const questions = this.getAnswerEntryQuestions();
+    if (num < 1 || num > questions.length) return;
+    this.syncCurrentTextInput();
+    if (this.state.answerEntryMode === 'bulk') {
+      this.setAnswerEntryMode('fast');
+    }
+    this.state.currentQuestion = num;
+    this.patchAnswerEntryUI();
+    requestAnimationFrame(() => {
+      document.querySelector(`.answer-grid-item[data-goto="${num}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      this.focusAnswerPanel();
+    });
+  }
+
+  focusQuestionIssues(questionNumbers) {
+    const nums = (questionNumbers || []).filter((n) => n >= 1);
+    if (!nums.length) return;
+    this.state.answerIssueQuestions = [...new Set(nums)];
+    this.goToQuestion(nums[0]);
+  }
+
+  syncCurrentTextInput() {
+    const textInput = document.getElementById('answer-text-input');
+    if (!textInput || !textInput.value.trim()) return;
+    const questions = this.getAnswerEntryQuestions();
+    const q = questions.find((x) => x.number === this.state.currentQuestion);
+    if (!q) return;
+    const answers = this.getCurrentAnswers();
+    answers[q.id] = textInput.value.trim();
+    this.state.currentAnswers = answers;
   }
 
   async handleQuestionCountChange(input) {
@@ -446,9 +753,8 @@
     return { ...(existing?.answers || {}) };
   }
 
-  setAnswer(value, autoNext = false) {
-    const { examId } = this.state.answerEntry;
-    const questions = this.repository.getQuestionsByExam(examId);
+  setAnswer(value, autoNext = true) {
+    const questions = this.getAnswerEntryQuestions();
     const q = questions.find((x) => x.number === this.state.currentQuestion);
     if (!q) return;
 
@@ -456,40 +762,101 @@
     answers[q.id] = value;
     this.state.currentAnswers = answers;
 
-    const textInput = document.querySelector('.answer-text-input');
-    if (textInput) textInput.value = value;
-
-    document.querySelectorAll('.answer-btn').forEach((btn) => {
-      btn.classList.toggle('answer-btn--selected', btn.dataset.answer === value);
-    });
+    if (this.state.answerIssueQuestions?.length) {
+      this.state.answerIssueQuestions = this.state.answerIssueQuestions.filter((n) => n !== q.number);
+    }
 
     if (autoNext && this.state.currentQuestion < questions.length) {
       this.state.currentQuestion += 1;
     }
-    this.renderer.render('answer-entry');
+    this.patchAnswerEntryUI();
+    this.focusAnswerPanel();
   }
 
   moveQuestion(delta) {
-    const { examId } = this.state.answerEntry;
-    const questions = this.repository.getQuestionsByExam(examId);
+    this.syncCurrentTextInput();
+    const questions = this.getAnswerEntryQuestions();
     const next = this.state.currentQuestion + delta;
     if (next < 1 || next > questions.length) return;
     this.state.currentQuestion = next;
-    this.renderer.render('answer-entry');
+    this.patchAnswerEntryUI();
+    this.focusAnswerPanel();
   }
 
-  async saveAnswers() {
+  async applyBulkAnswers() {
+    const textarea = document.getElementById('bulk-answer-input');
+    const msgEl = document.getElementById('bulk-validation-msg');
+    if (!textarea) return;
+
+    this.state.bulkInputDraft = textarea.value;
+    const questions = this.getAnswerEntryQuestions();
+    const mode = this.getAnswerMode();
+    const tokens = parseBulkAnswerInput(textarea.value, mode);
+    const validation = validateBulkAnswers(tokens, questions.length, mode);
+    const { valid, errors, warnings, errorQuestionNumbers } = validation;
+
+    if (msgEl) {
+      if (errors.length) {
+        msgEl.className = 'bulk-validation-msg bulk-validation-msg--error';
+        msgEl.innerHTML = renderBulkValidationHtml(errors, warnings);
+        this.focusQuestionIssues(errorQuestionNumbers);
+        return;
+      }
+      const lines = [...warnings];
+      if (lines.length) msgEl.className = 'bulk-validation-msg bulk-validation-msg--warn';
+      else msgEl.className = 'bulk-validation-msg bulk-validation-msg--ok';
+      msgEl.innerHTML = lines.length
+        ? renderBulkValidationHtml([], warnings)
+        : `${Math.min(tokens.length, questions.length)}개 답안을 적용할 수 있습니다.`;
+    }
+
+    if (!valid) return;
+
+    const current = this.getCurrentAnswers();
+    const hasExisting = questions.some((q) => String(current[q.id] ?? current[String(q.number)] ?? '').trim());
+
+    let proceed = true;
+    if (warnings.length || hasExisting) {
+      const parts = [];
+      if (warnings.length) {
+        parts.push(
+          warnings
+            .map((w) => (typeof w === 'string' ? w : [w.message, w.detail].filter(Boolean).join('\n')))
+            .join('\n\n')
+        );
+      }
+      if (hasExisting) parts.push('기존에 입력된 답안을 덮어씁니다.');
+      parts.push('적용하시겠습니까?');
+      proceed = await confirmDialog(parts.join('\n\n'), { title: '일괄 입력 적용', confirmLabel: '적용' });
+    }
+    if (!proceed) {
+      const warnNums = warnings.flatMap((w) => (typeof w === 'object' && w.questionNumbers ? w.questionNumbers : []));
+      if (warnNums.length) this.focusQuestionIssues(warnNums);
+      return;
+    }
+
+    const mapped = tokensToAnswersMap(tokens, questions, mode);
+    this.state.currentAnswers = { ...current, ...mapped };
+    this.state.currentQuestion = 1;
+    this.state.answerIssueQuestions = [];
+    if (msgEl) {
+      msgEl.className = 'bulk-validation-msg bulk-validation-msg--ok';
+      msgEl.textContent = '답안이 적용되었습니다. 빠른 입력에서 개별 수정할 수 있습니다.';
+    }
+    showToast('일괄 답안이 적용되었습니다.');
+    this.setAnswerEntryMode('fast');
+    this.patchAnswerEntryUI();
+    this.focusAnswerPanel();
+  }
+
+  async saveAnswers(options = {}) {
+    const { andNextStudent = false } = options;
     const { examId, studentId } = this.state.answerEntry;
     if (!examId || !studentId) return;
 
-    const questions = this.repository.getQuestionsByExam(examId);
+    this.syncCurrentTextInput();
+    const questions = this.getAnswerEntryQuestions();
     const answers = this.getCurrentAnswers();
-
-    const textInput = document.querySelector('.answer-text-input');
-    if (textInput && textInput.value.trim()) {
-      const q = questions.find((x) => x.number === this.state.currentQuestion);
-      if (q) answers[q.id] = textInput.value.trim();
-    }
 
     const missing = questions.filter((q) => {
       const ans = answers[q.id] ?? answers[String(q.number)];
@@ -497,11 +864,18 @@
     });
 
     if (missing.length) {
+      const missingNums = missing.map((q) => q.number);
+      this.state.answerIssueQuestions = missingNums;
+      this.patchAnswerEntryUI();
       const ok = await confirmDialog(
-        `미입력 문항이 ${missing.length}개 있습니다 (${missing.map((q) => q.number).join(', ')}). 그래도 저장하시겠습니까?`,
+        `미입력 문항이 ${missing.length}개 있습니다 (${missingNums.join(', ')}).\n\n답안표에서 문항 번호를 클릭하면 해당 문항으로 이동할 수 있습니다. 그래도 저장하시겠습니까?`,
         { title: '미입력 문항', confirmLabel: '저장' }
       );
-      if (!ok) return;
+      if (!ok) {
+        this.focusQuestionIssues(missingNums);
+        return;
+      }
+      this.state.answerIssueQuestions = [];
     }
 
     const data = this.repository.loadAll();
@@ -518,6 +892,51 @@
     this.repository.saveResult(result);
     this.state.currentAnswers = null;
     showToast('답안이 저장되고 채점되었습니다.');
+
+    if (andNextStudent) {
+      const nextId = this.getNextStudentId();
+      if (!nextId) {
+        showToast('마지막 학생입니다.');
+        this.renderer.render('answer-entry');
+        return;
+      }
+      this.state.answerEntry.studentId = nextId;
+      this.state.currentQuestion = 1;
+      this.state.bulkInputDraft = '';
+      this.renderer.render('answer-entry');
+      return;
+    }
+
+    const exam = this.repository.getExam(examId);
+    const hasNext = this.hasNextAnswerStudent();
+    const choice = await choiceDialog('답안이 저장되었습니다. 다음 작업을 선택하세요.', {
+      title: '저장 완료',
+      choices: [
+        { id: 'results', label: '결과 보기', primary: true },
+        { id: 'continue', label: '현재 학생 계속 수정' },
+        { id: 'next', label: hasNext ? '다음 학생 답안 입력' : '마지막 학생입니다.', disabled: !hasNext },
+      ],
+    });
+
+    if (choice === 'results') {
+      this.state.studentResults = { classId: exam?.classId || '', studentId };
+      this.state.selectedResultId = result.id;
+      this.navigate('student-results');
+      return;
+    }
+
+    if (choice === 'next' && hasNext) {
+      const nextId = this.getNextStudentId();
+      if (nextId) {
+        this.state.answerEntry.studentId = nextId;
+        this.state.currentQuestion = 1;
+        this.state.bulkInputDraft = '';
+        this.renderer.render('answer-entry');
+        return;
+      }
+    }
+
+    this.state.currentQuestion = 1;
     this.renderer.render('answer-entry');
   }
 
@@ -551,6 +970,9 @@
       selectedClassId: null,
       editingExamId: null,
       answerEntry: { classId: '', examId: '', studentId: '' },
+      answerEntryMode: 'fast',
+      bulkInputDraft: '',
+      answerIssueQuestions: [],
       currentAnswers: null,
       currentQuestion: 1,
       studentResults: { classId: '', studentId: '' },
@@ -591,17 +1013,11 @@
     });
 
     document.addEventListener('input', (e) => {
-      if (e.target.matches('.answer-text-input')) {
-        const { examId } = app.state.answerEntry;
-        const questions = app.repository.getQuestionsByExam(examId);
-        const q = questions.find((x) => x.number === app.state.currentQuestion);
-        if (!q) return;
-        const answers = app.getCurrentAnswers();
-        answers[q.id] = e.target.value;
-        app.state.currentAnswers = answers;
-      }
       if (e.target.matches('[data-question-major]')) {
         app.refreshMiddleDatalist(e.target);
+      }
+      if (e.target.matches('#bulk-answer-input')) {
+        app.state.bulkInputDraft = e.target.value;
       }
     });
   });

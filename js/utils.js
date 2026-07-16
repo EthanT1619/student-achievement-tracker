@@ -103,4 +103,59 @@
       modal.classList.remove('hidden');
     });
   };
+
+  SAT.choiceDialog = function choiceDialog(message, { title = '선택', choices = [] } = {}) {
+    return new Promise((resolve) => {
+      const overlay = document.getElementById('modal-overlay');
+      const modal = document.getElementById('confirm-modal');
+      if (!overlay || !modal) {
+        resolve(null);
+        return;
+      }
+
+      modal.querySelector('.modal-title').textContent = title;
+      modal.querySelector('.modal-body').textContent = message;
+      const footer = modal.querySelector('.modal-footer');
+      const originalFooterHtml = footer.innerHTML;
+
+      footer.innerHTML = [
+        ...choices.map((c) => {
+          const cls = c.primary ? 'btn btn-primary' : 'btn btn-secondary';
+          const disabled = c.disabled ? ' disabled' : '';
+          return `<button type="button" class="${cls}" data-choice="${escapeHtml(c.id)}"${disabled}>${escapeHtml(c.label)}</button>`;
+        }),
+        '<button type="button" class="btn btn-secondary" data-choice="__cancel">닫기</button>',
+      ].join('');
+
+      const cleanup = (result) => {
+        overlay.classList.add('hidden');
+        modal.classList.add('hidden');
+        footer.innerHTML = originalFooterHtml;
+        footer.querySelectorAll('[data-choice]').forEach((btn) => {
+          btn.removeEventListener('click', onChoice);
+        });
+        overlay.removeEventListener('click', onCancel);
+        resolve(result);
+      };
+
+      const onChoice = (e) => {
+        const id = e.currentTarget.dataset.choice;
+        if (id === '__cancel' || e.currentTarget.disabled) {
+          cleanup(null);
+          return;
+        }
+        cleanup(id);
+      };
+
+      const onCancel = () => cleanup(null);
+
+      footer.querySelectorAll('[data-choice]').forEach((btn) => {
+        btn.addEventListener('click', onChoice);
+      });
+      overlay.addEventListener('click', onCancel);
+
+      overlay.classList.remove('hidden');
+      modal.classList.remove('hidden');
+    });
+  };
 })(window.SAT = window.SAT || {});
