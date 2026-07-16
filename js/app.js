@@ -109,7 +109,7 @@
         this.state.selectedResultId = action.dataset.id;
         this.renderer.render('student-results');
       },
-      'print-results': () => window.print(),
+      'print-results': () => SAT.printStudentResults(),
       'copy-prev-categories': () => this.copyPrevCategories(Number(action.dataset.num)),
       'toggle-page-guide': () => this.togglePageGuide(action.dataset.guideView),
       'toggle-checklist': () => this.toggleChecklist(),

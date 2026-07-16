@@ -129,6 +129,83 @@
     container.innerHTML = renderFallbackTrend(trendData);
   };
 
+  SAT.prepareChartsForPrint = function prepareChartsForPrint() {
+    let prepared = 0;
+    document.querySelectorAll('.chart-wrapper').forEach((wrapper) => {
+      const canvas = wrapper.querySelector('canvas');
+      if (!canvas) return;
+      let img = wrapper.querySelector('.chart-print-img');
+      if (!img) {
+        img = document.createElement('img');
+        img.className = 'chart-print-img';
+        img.alt = canvas.getAttribute('aria-label') || 'Chart';
+        wrapper.appendChild(img);
+      }
+      try {
+        img.src = canvas.toDataURL('image/png');
+        img.width = canvas.width;
+        img.height = canvas.height;
+        prepared += 1;
+      } catch (err) {
+        console.warn('Chart print export failed', err);
+      }
+    });
+    const detail = document.querySelector('.result-detail');
+    if (prepared > 0 && detail) detail.classList.add('charts-print-ready');
+    return prepared;
+  };
+
+  SAT.cleanupChartsAfterPrint = function cleanupChartsAfterPrint() {
+    document.querySelector('.result-detail')?.classList.remove('charts-print-ready');
+  };
+
+  SAT.ensureChartsReadyForPrint = function ensureChartsReadyForPrint() {
+    return new Promise((resolve) => {
+      const finalize = () => {
+        activeCharts.forEach((chart) => {
+          chart.stop();
+          chart.update('none');
+        });
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      };
+      if (activeCharts.size === 0) {
+        requestAnimationFrame(() => requestAnimationFrame(finalize));
+        return;
+      }
+      finalize();
+    });
+  };
+
+  SAT.printStudentResults = async function printStudentResults() {
+    await SAT.ensureChartsReadyForPrint();
+    SAT.prepareChartsForPrint();
+    const imgs = [...document.querySelectorAll('.chart-print-img[src]')];
+    await Promise.all(
+      imgs.map(
+        (img) =>
+          img.complete
+            ? Promise.resolve()
+            : new Promise((resolve) => {
+                img.onload = resolve;
+                img.onerror = resolve;
+              })
+      )
+    );
+    window.print();
+  };
+
+  if (!window._satPrintHooks) {
+    window._satPrintHooks = true;
+    window.addEventListener('beforeprint', () => {
+      activeCharts.forEach((chart) => {
+        chart.stop();
+        chart.update('none');
+      });
+      SAT.prepareChartsForPrint();
+    });
+    window.addEventListener('afterprint', () => SAT.cleanupChartsAfterPrint());
+  }
+
   SAT.renderPrintChartTables = function renderPrintChartTables(majorStats, trendData) {
     const major = majorStats?.major || {};
     const middle = majorStats?.middle || {};
