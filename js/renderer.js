@@ -517,17 +517,12 @@
       ${
         student && results.length
           ? `
-        <div class="print-header">
-          <h2>${escapeHtml(student.name)}${student.englishName ? ` (${escapeHtml(student.englishName)})` : ''}</h2>
-          <p>${APP_NAME} · 상담용 결과</p>
-        </div>
-
-        <section class="card">
+        <section class="card no-print">
           <div class="card-header">
             <h2>시험 선택</h2>
             <button class="btn btn-secondary btn-sm no-print" data-action="print-results">인쇄</button>
           </div>
-          <div class="card-body no-print">
+          <div class="card-body">
             <div class="btn-group">
               ${results
                 .map((r) => {
@@ -544,6 +539,10 @@
           selectedResult && selectedExam
             ? `
           <section class="card result-detail">
+            <div class="print-header">
+              <h2>${escapeHtml(student.name)}${student.englishName ? ` (${escapeHtml(student.englishName)})` : ''}</h2>
+              <p>${APP_NAME} · 상담용 결과</p>
+            </div>
             <div class="card-header">
               <h2>${escapeHtml(selectedExam.title)}</h2>
               <span class="badge">${formatDate(selectedExam.date)}</span>

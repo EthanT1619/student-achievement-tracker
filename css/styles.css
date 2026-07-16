@@ -1352,18 +1352,15 @@ textarea {
   }
 
   .app-nav,
+  .app-header,
   .no-print,
   #toast-container,
   .modal-overlay,
   .modal,
-  .prototype-banner {
+  .prototype-banner,
+  .page-guide,
+  .onboard-checklist {
     display: none !important;
-  }
-
-  .app-header {
-    position: static;
-    box-shadow: none;
-    border: none;
   }
 
   .app-main {
@@ -1378,9 +1375,49 @@ textarea {
     page-break-inside: avoid;
   }
 
+  .card.result-detail {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .result-detail .print-header {
+    display: block !important;
+    text-align: center;
+    margin: 0;
+    padding: 0 0 16px;
+    border-bottom: 1px solid #ccc;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .result-detail .print-header h2 {
+    font-size: 1.4rem;
+    margin-bottom: 4px;
+  }
+
+  .result-detail .card-header {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .result-summary {
+    grid-template-columns: repeat(4, 1fr);
+  }
+
+  .result-detail .card-body > h3 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
   .chart-wrapper {
+    min-height: 0;
     break-inside: avoid;
     page-break-inside: avoid;
+  }
+
+  .chart-container {
+    height: auto;
+    min-height: 0;
   }
 
   .chart-wrapper canvas,
@@ -1391,32 +1428,23 @@ textarea {
   .chart-print-img {
     display: block !important;
     width: 100%;
+    max-width: 100%;
     max-height: 220px;
     height: auto;
     object-fit: contain;
-    margin: 12px 0 24px;
+    margin: 0;
   }
 
   .result-detail.charts-print-ready .print-chart-tables {
     display: none !important;
   }
 
-  .print-only,
-  .print-header {
+  .print-only {
     display: block !important;
-  }
-
-  .print-header {
-    text-align: center;
-    margin-bottom: 20px;
-  }
-
-  .print-header h2 {
-    font-size: 1.4rem;
   }
 
   @page {
     size: A4 portrait;
-    margin: 15mm;
+    margin: 12mm;
   }
 }
