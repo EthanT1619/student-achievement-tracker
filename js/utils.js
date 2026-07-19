@@ -23,14 +23,33 @@
       .replace(/'/g, '&#39;');
   };
 
+  SAT.clampPercent = function clampPercent(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(100, n));
+  };
+
+  SAT.safeCount = function safeCount(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return Math.floor(n);
+  };
+
+  SAT.percentFromRatio = function percentFromRatio(correct, total) {
+    const t = SAT.safeCount(total);
+    if (t === 0) return 0;
+    const c = SAT.safeCount(correct);
+    return SAT.clampPercent(Math.round((c / t) * 100));
+  };
+
   SAT.formatDate = function formatDate(iso) {
     if (!iso) return '—';
     try {
       const d = new Date(iso);
-      if (Number.isNaN(d.getTime())) return iso;
+      if (Number.isNaN(d.getTime())) return SAT.escapeHtml(String(iso));
       return d.toLocaleDateString('ko-KR', { year: 'numeric', month: 'short', day: 'numeric' });
     } catch {
-      return iso;
+      return SAT.escapeHtml(String(iso));
     }
   };
 
@@ -122,7 +141,7 @@
         ...choices.map((c) => {
           const cls = c.primary ? 'btn btn-primary' : 'btn btn-secondary';
           const disabled = c.disabled ? ' disabled' : '';
-          return `<button type="button" class="${cls}" data-choice="${escapeHtml(c.id)}"${disabled}>${escapeHtml(c.label)}</button>`;
+          return `<button type="button" class="${cls}" data-choice="${SAT.escapeHtml(c.id)}"${disabled}>${SAT.escapeHtml(c.label)}</button>`;
         }),
         '<button type="button" class="btn btn-secondary" data-choice="__cancel">닫기</button>',
       ].join('');
