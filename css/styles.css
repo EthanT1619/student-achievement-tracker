@@ -1784,6 +1784,16 @@ textarea {
     page-break-after: avoid;
   }
 
+  .student-results-print .print-header--student {
+    display: block !important;
+    text-align: center;
+    margin: 0 0 16px;
+    padding: 0 0 16px;
+    border-bottom: 1px solid #ccc;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
   .exam-overview-print .print-header {
     display: block !important;
     text-align: center;
@@ -1796,7 +1806,8 @@ textarea {
     display: none !important;
   }
 
-  .result-detail .print-header h2 {
+  .result-detail .print-header h2,
+  .student-results-print .print-header--student h2 {
     font-size: 1.4rem;
     margin-bottom: 4px;
   }

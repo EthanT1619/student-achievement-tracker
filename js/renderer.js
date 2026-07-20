@@ -1053,6 +1053,11 @@
         ${
           selectedResult && selectedExam
             ? `
+          <div class="student-results-print">
+            <div class="print-header print-header--student">
+              <h2>${escapeHtml(student.name)}${student.englishName ? ` (${escapeHtml(student.englishName)})` : ''}</h2>
+              <p>${APP_NAME} · 상담용 결과</p>
+            </div>
           ${
             showAnyAllExams
               ? `
@@ -1090,10 +1095,6 @@
               : ''
           }
           <section class="card result-detail">
-            <div class="print-header">
-              <h2>${escapeHtml(student.name)}${student.englishName ? ` (${escapeHtml(student.englishName)})` : ''}</h2>
-              <p>${APP_NAME} · 상담용 결과</p>
-            </div>
             ${
               display.showExamTitle
                 ? `<div class="card-header">
@@ -1158,7 +1159,8 @@
               ${display.showPrintChartTables ? renderPrintChartTables(categoryStats, trendData) : ''}
               ${this.renderTeacherCommentSection(selectedResult, display)}
             </div>
-          </section>`
+          </section>
+          </div>`
             : ''
         }`
           : student
